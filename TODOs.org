@@ -1,0 +1,5 @@
+* DONE finish intro
+CLOSED: [2023-08-16 Wed 16:58]
+* TODO resize the video frames
+* TODO draw rectangles on the video
+* TODO do object detection and draw rectangles around the objects

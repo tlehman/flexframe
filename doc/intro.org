@@ -1,0 +1,165 @@
+#+TITLE: Flexframe docs
+#+AUTHOR: Tobi Lehman <mail@tobilehman.com>
+#+DATE: 2023-08-16
+
+* Introduction
+Flexframe is a literate [[https://clojure.org][Clojure]] program to better understand video streams and frame processing.
+
+It uses [[https://opencv.org][OpenCV]]'s Java library as well as Swing for the UI. This document fully explains how it works.
+
+** Initialize the camera
+
+The ~initialize-camera~ function returns an [[https://javadoc.io/static/org.bytedeco.javacpp-presets/opencv/3.1.0-1.2/org/bytedeco/javacpp/opencv_videoio.VideoCapture.html][~org.bytedeco.opencv.opencv_videoio.VideoCapture~]] object.
+
+(See [[Set up the namespace and dependencies]] for more about what the ~ns~ macro is doing)
+
+#+begin_src clojure :tangle core.clj :noweb yes
+  <<ns-and-deps>>
+
+  (defn initialize-camera []
+    "Load the native libraries and test access to the camera"
+    (Loader/load CvArr) ; Load the native OpenCV libraries
+    (VideoCapture. 0))
+#+end_src
+
+** Initialize the display
+This creates the Swing JFrame object that displays the current frame.
+
+#+begin_src clojure :tangle core.clj
+(defn initialize-display []
+  "Create the Swing JFrame object used to display the current buffered image"
+  (let [label (JLabel.)
+        jframe (JFrame. "Camera Display")]
+    (.add jframe label)
+    (.setSize jframe 640 480)
+    (.setDefaultCloseOperation jframe JFrame/EXIT_ON_CLOSE)
+    (.setVisible jframe true)
+    {:jframe jframe, :label label}))
+#+end_src
+
+The ~initialize-display~ function returns a map:
+
+#+begin_src clojure
+  {:jframe jframe,
+   :label label}
+#+end_src
+
+Where ~jframe~ is the [[https://docs.oracle.com/en/java/javase/11/docs/api/java.desktop/javax/swing/JFrame.html][JFrame]] object for the main UI window,
+and ~label~ is the [[https://docs.oracle.com/en/java/javase/11/docs/api/java.desktop/javax/swing/JLabel.html][JLabel]] that holds the image for the current frame.
+The reason I did it this way is that I wanted to keep a reference to a single ~JFrame~ window
+and just replace the images as they streamed in.
+
+** Main capture and display loop
+Now that we have the camera and the display, we can capture frames from the camera and then
+update the image in the display to show a movie of what the camera sees. After we get this
+working we will start doing some basic image processing and manipulation of the images.
+
+#+name: capture-and-display
+#+begin_src clojure :tangle core.clj :noweb yes
+  <<capture-frame>>
+
+  <<mat-to-buffered-image>>
+
+  <<update-display>>
+
+  (defn capture-and-display []
+    (let [capture (initialize-camera)
+          display (initialize-display)]
+      (loop []
+        (let [frame (capture-frame capture)
+              image (mat-to-buffered-image frame)]
+          (update-display display image)
+          (Thread/sleep 33)) ; Delay to control the frame rate
+        (recur))))
+#+end_src
+
+Now that you see the "shape" of the program, lets dig into these three functions:
+- ~capture-frame~
+- ~mat-to-buffered-image~
+- ~update-display~
+
+** Capturing frames
+
+Frames are matrices, or more specifically, ~org.bytedeco.opencv.opencv_core.Mat~ objects.
+
+#+name: capture-frame
+#+begin_src clojure
+  (defn capture-frame [^org.bytedeco.opencv.opencv_videoio.VideoCapture capture]
+    "Take the VideoCapture object and read it into an OpenCV Mat"
+    (let [frame (Mat.)]
+      (.read capture frame)
+      frame))
+#+end_src
+
+** Converting OpenCV frame matrices (~Mat~ s) to Java AWT Buffered Images
+
+Now that you have ~frame~, we need to convert it to a ~java.awt.image.BufferedImage~
+
+#+name: mat-to-buffered-image
+#+begin_src clojure
+(defn mat-to-buffered-image [^org.bytedeco.opencv.opencv_core.Mat mat]
+  (let [open-cv-converter (OpenCVFrameConverter$ToMat.)
+        java2d-converter (Java2DFrameConverter.)
+        frame (.convert open-cv-converter mat)]
+    (.convert java2d-converter frame)))
+#+end_src
+
+Let's break this down. What is this innermost function call doing to ~mat~?
+
+#+begin_src clojure
+(let [open-cv-converter (OpenCVFrameConverter$ToMat.)]
+  (.convert open-cv-converter mat))
+#+end_src
+
+This produces a [[http://bytedeco.org/javacv/apidocs/org/bytedeco/javacv/Frame.html][org.bytedeco.javacv.Frame]] object, which can then be converted into a buffered image
+by the [[http://bytedeco.org/javacv/apidocs/org/bytedeco/javacv/Java2DFrameConverter.html][org.bytedeco.javacv.Java2DFrameConverter]]
+
+** Updating the display
+
+Remember in [[Initialize the display]] how there was a map with the ~jframe~ window and the ~label~.
+
+This ~update-display~ function below extracts the ~label~ from the map using the ~:label~ keyword.
+After that, it calls ~.setIcon~ on that label to set the new ~ImageIcon~ object on the label.
+
+#+name: update-display
+#+begin_src clojure
+(defn update-display [display image]
+  "Update the JFrame's ImageLabel with a new image"
+  (let [label (:label display)
+        icon (ImageIcon. image)]
+    (.setIcon label icon)))
+#+end_src
+
+
+** Set up the namespace and dependencies
+
+This defines the main namespace that the program's functions will live in.
+It also tells Clojure to generate a Java class, this is used for compiling the program to a jar file.
+
+#+name: ns-and-deps
+#+begin_src clojure
+(ns flexframe.core
+  (:gen-class) ; This tells Clojure to generate a Java class, useful for compiling to a jar file
+  (:import [org.bytedeco.opencv.global opencv_highgui]
+           [org.bytedeco.opencv.opencv_core Mat CvArr]
+           [org.bytedeco.opencv.opencv_videoio VideoCapture]
+           [org.bytedeco.javacpp Loader]
+           [org.bytedeco.javacv OpenCVFrameConverter$ToMat]
+           [org.bytedeco.javacv Java2DFrameConverter]
+           [javax.swing JFrame JLabel ImageIcon]
+           [java.awt Image]))
+#+end_src
+
+** Set up the entry point
+Finally, we need to call the main ~capture-and-display~ function.
+
+#+begin_src clojure :tangle core.clj
+  (capture-and-display)
+#+end_src
+
+* Appendix
+** How to tangle this literate program into working clojure code.
+
+Open this this org file in Emacs, and then run ~org-babel-tangle~
+
+** TODO How to compile this into a jar file
